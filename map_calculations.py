@@ -6,6 +6,7 @@ import warnings
 import argparse
 from pathlib import Path
 import h5py
+import healpy
 from astropy import units
 from scipy import sparse, linalg
 import matplotlib.pyplot as plt
@@ -97,7 +98,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 
-def plot_summary_plot(data_dict, k_vals, nhistbins=50, lw=4):
+def plot_summary_plot(data_dict, k_vals, nbins=50, lw=4):
     """
     Plot the power spectrum, posteriors, matrix inversion accuracy, and MAP
     residuals histograms.
@@ -220,12 +221,12 @@ def plot_summary_plot(data_dict, k_vals, nhistbins=50, lw=4):
     for i_col, (ax_inv, ax_res, func, func_lbl) in enumerate(zip_obj):
         _ = ax_inv.hist(
             func(inv_accuracy), lw=lw, histtype='step',
-            bins=nhistbins, log=True, label='Recovered'
+            bins=nbins, log=True, label='Recovered'
         )
         if plot_exp:
             _ = ax_inv.hist(
                 func(inv_accuracy_exp), lw=lw, ls=exp_ls, color=exp_c,
-                histtype='step', bins=nhistbins, log=True,
+                histtype='step', bins=nbins, log=True,
                 label='Expected'
             )
         ax_inv.set_xlabel(
@@ -237,14 +238,14 @@ def plot_summary_plot(data_dict, k_vals, nhistbins=50, lw=4):
         noise_std = noise.std()
         lbl = f'Noise\n$\sigma$={noise_std:.4e}'
         _ = ax_res.hist(
-            func(noise) / noise_std, bins=nhistbins, color='k',
+            func(noise) / noise_std, bins=nbins, color='k',
             alpha=0.5, label=lbl
         )
         res_std = map_vis_res.std()
         fe = (noise_std - res_std) / noise_std
         lbl = f'Recovered\n$\sigma$={res_std:.4e} ({fe*100:.2f}%)'
         _ = ax_res.hist(
-            func(map_vis_res) / noise_std, bins=nhistbins, histtype='step',
+            func(map_vis_res) / noise_std, bins=nbins, histtype='step',
             lw=lw, label=lbl
         )
         if plot_exp:
@@ -252,7 +253,7 @@ def plot_summary_plot(data_dict, k_vals, nhistbins=50, lw=4):
             fe = (noise_std - res_exp_std) / noise_std
             lbl = f'Expected\n$\sigma$={res_exp_std:.4e} ({fe*100:.2f}%)'
             _ = ax_res.hist(
-                func(map_vis_exp_res) / noise_std, bins=nhistbins,
+                func(map_vis_exp_res) / noise_std, bins=nbins,
                 histtype='step', lw=lw, color=exp_c, ls=exp_ls, label=lbl
             )
         ax_res.set_xlabel(
@@ -277,9 +278,37 @@ def plot_summary_plot(data_dict, k_vals, nhistbins=50, lw=4):
 
     return fig
 
-def plot_sky_summary_plot(data_dict, hpx, i_f=0, kelvin=True, lw=3, nhistbins=51):
+def mollview(hpx_map, **kwargs):
+    with warnings.catch_warnings(record=True) as w:
+        proj = healpy.mollview(hpx_map, **kwargs)
+    return proj
+
+def cartview(hpx_map, **kwargs):
+    with warnings.catch_warnings(record=True) as w:
+        proj = healpy.cartview(hpx_map, **kwargs)
+    return proj
+
+def get_projected_map(
+        hpx_map, nside=None, pix=None, proj='cartview', **kwargs):
+    if nside is not None:
+        npix = healpy.nside2npix(nside)
+        hpx_map_full = np.ones(npix) * np.nan
+        hpx_map_full[pix] = hpx_map
+        hpx_map = hpx_map_full
+    if proj == 'cartview':
+        proj = cartview(hpx_map, return_projected_map=True, **kwargs)
+    elif proj == 'mollview':
+        proj = mollview(hpx_map, return_projected_map=True, **kwargs)
+    else:
+        print('Unidentified projection type:', proj)
+        proj = None
+    plt.close(plt.gcf())
+    return proj
+
+def plot_sky_summary_plot(
+        data_dict, hpx, i_f=0, kelvin=True, lw=3, nbins=51, suptitle=None):
     """
-    Plot MAP sky plots.
+    Plot MAP sky summary plot.
 
     """
     nf = data_dict['bm'].nf
@@ -310,6 +339,10 @@ def plot_sky_summary_plot(data_dict, hpx, i_f=0, kelvin=True, lw=3, nhistbins=51
     fig_width = plot_width * 4
     fig_height = plot_height * 2.2
     fig = plt.figure(figsize=(fig_width, fig_height))
+    if suptitle:
+        top = 0.9
+    else:
+        top = 0.975
     
     # Images
     if plot_exp:
@@ -366,7 +399,7 @@ def plot_sky_summary_plot(data_dict, hpx, i_f=0, kelvin=True, lw=3, nhistbins=51
     vmin = np.nanmin(proj_d)
     vmax = np.nanmax(proj_d)
     im = ax.imshow(proj_d, vmin=vmin, vmax=vmax, **im_kwargs)
-    cb = fig.colorbar(im, cax=ax.cax, label=temp_unit)
+    _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
     
     ax = grid.axes_row[0][1]
     ax.set_title('MAP sky')
@@ -376,12 +409,12 @@ def plot_sky_summary_plot(data_dict, hpx, i_f=0, kelvin=True, lw=3, nhistbins=51
         extend = 'both'
     elif extend_min:
         extend = 'min'
-    elif extent_max:
+    elif extend_max:
         extend = 'max'
     else:
         extend = 'neither'
     im = ax.imshow(proj_map_sky, vmin=vmin, vmax=vmax, **im_kwargs)
-    cb = fig.colorbar(im, cax=ax.cax, label=temp_unit, extend=extend)
+    _ = fig.colorbar(im, cax=ax.cax, label=temp_unit, extend=extend)
     ax.annotate('Recovered', **txt_kwargs)
     
     ax = grid.axes_row[0][2]
@@ -390,12 +423,12 @@ def plot_sky_summary_plot(data_dict, hpx, i_f=0, kelvin=True, lw=3, nhistbins=51
     im = ax.imshow(
         proj_map_sky_res, cmap='RdBu_r', vmin=-clim, vmax=clim, **im_kwargs
     )
-    cb = fig.colorbar(im, cax=ax.cax, label=temp_unit)
+    _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
     
     ax = grid.axes_row[0][3]
     ax.set_title(r'$\sigma_\nu$(d - MAP sky)')
     im = ax.imshow(proj_res_std, cmap='magma', **im_kwargs)
-    cb = fig.colorbar(im, cax=ax.cax, label=temp_unit)
+    _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
     
     if plot_exp:
         ax = grid.axes_row[1][1]
@@ -405,34 +438,35 @@ def plot_sky_summary_plot(data_dict, hpx, i_f=0, kelvin=True, lw=3, nhistbins=51
             extend = 'both'
         elif extend_min:
             extend = 'min'
-        elif extent_max:
+        elif extend_max:
             extend = 'max'
         else:
             extend = 'neither'
         im = ax.imshow(proj_map_sky_exp, vmin=vmin, vmax=vmax, **im_kwargs)
-        cb = fig.colorbar(im, cax=ax.cax, label=temp_unit, extend=extend)
+        _ = fig.colorbar(im, cax=ax.cax, label=temp_unit, extend=extend)
         ax.annotate('Expected', **txt_kwargs)
 
         ax = grid.axes_row[1][2]
         clim = np.nanmax(np.abs(proj_map_sky_exp_res))
         im = ax.imshow(
-            proj_map_sky_exp_res, cmap='RdBu_r', vmin=-clim, vmax=clim, **im_kwargs
+            proj_map_sky_exp_res, cmap='RdBu_r', vmin=-clim, vmax=clim,
+            **im_kwargs
         )
-        cb = fig.colorbar(im, cax=ax.cax, label=temp_unit)
+        _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
 
         ax = grid.axes_row[1][3]
         im = ax.imshow(proj_res_exp_std, cmap='magma', **im_kwargs)
-        cb = fig.colorbar(im, cax=ax.cax, label=temp_unit)
+        _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
     
     for ax in grid.axes_all:
         ax.set_xlabel('RA [deg]')
         ax.set_ylabel('DEC [deg]')
     
     fig.tight_layout()
+    fig.subplots_adjust(top=top)
     
     # Histograms
     div = grid.get_divider()
-    top = div.get_position()[2]
     buffer = 0.05
     left = buffer
     right = 1 - buffer
@@ -445,7 +479,6 @@ def plot_sky_summary_plot(data_dict, hpx, i_f=0, kelvin=True, lw=3, nhistbins=51
         right=right
     )
     if plot_exp:
-        exp_fmt = 'k--'
         exp_c = 'k'
         exp_ls = '--'
     
@@ -453,32 +486,30 @@ def plot_sky_summary_plot(data_dict, hpx, i_f=0, kelvin=True, lw=3, nhistbins=51
     ax_inv = axs_all[0]
     _ = ax_inv.hist(
         np.real(inv_accuracy), lw=lw, histtype='step',
-        bins=nhistbins, log=True, label='Recovered'
+        bins=nbins, log=True, label='Recovered'
     )
     if plot_exp:
         _ = ax_inv.hist(
             np.real(inv_accuracy_exp), lw=lw, ls=exp_ls, color=exp_c,
-            histtype='step', bins=nhistbins, log=True,
+            histtype='step', bins=nbins, log=True,
             label='Expected'
         )
     ax_inv.set_xlabel(
-        f'Re( '
-        + r'$\bar{d}_{\rm{sky}} - \Gamma\Gamma^{-1}\bar{d}_{\rm{sky}}$'
-        + ' )'
+        r'$\bar{d}_{\rm{sky}} - \Gamma\Gamma^{-1}\bar{d}_{\rm{sky}}$'
     )
 
     ax_res = axs_all[1]
     n_std = n.std()
     lbl = f'Noise\n$\sigma$={n_std:.4e}'
     _ = ax_res.hist(
-        np.real(n) / n_std, bins=nhistbins, color='k',
+        np.real(n) / n_std, bins=nbins, color='k',
         alpha=0.5, label=lbl
     )
     res_std = map_sky_res.std()
     fe = 1 - res_std / n_std
     lbl = f'Recovered\n$\sigma$={res_std:.4e} ({fe*100:.2f}%)'
     _ = ax_res.hist(
-        np.real(map_sky_res) / n_std, bins=nhistbins, histtype='step',
+        np.real(map_sky_res) / n_std, bins=nbins, histtype='step',
         lw=lw, label=lbl
     )
     if plot_exp:
@@ -486,18 +517,19 @@ def plot_sky_summary_plot(data_dict, hpx, i_f=0, kelvin=True, lw=3, nhistbins=51
         fe = 1 - res_exp_std / n_std
         lbl = f'Expected\n$\sigma$={res_exp_std:.4e} ({fe*100:.2f}%)'
         _ = ax_res.hist(
-            np.real(map_sky_exp_res) / n_std, bins=nhistbins,
+            np.real(map_sky_exp_res) / n_std, bins=nbins,
             histtype='step', lw=lw, color=exp_c, ls=exp_ls, label=lbl
         )
     ax_res.set_xlabel(
-        f'Re( '
-        + r'MAP Sky Residuals'
-        + r' ) [$\sigma_{\rm{noise}}$]'
+        r'MAP Sky Residuals [$\sigma_{\rm{noise}}$]'
     )
     ax_res.legend(loc='upper left')
     
     for ax in axs_all:
         ax.grid(which='both', alpha=0.5)
+    
+    if suptitle is not None:
+        fig.suptitle(suptitle)
     
     return fig
 
@@ -710,6 +742,7 @@ def calculate_map_data(args):
                 + f'sky model ({bm.hpx.nside}).'
                 + '\n\nAborting MAP sky calculations...'
             )
+            args.map_sky = False
         else:
             s_sky = stokes[0].flatten().to('mK').value
             n_sky_amp = s_sky.std() * args.sky_rms_frac
@@ -735,6 +768,7 @@ def calculate_map_data(args):
                 R_Ninv_R = build_R_Ninv_R(
                     bm, array_dir, matrix_name, R, Ninv_sky
                 )
+                print()
             
             print('-'*60 + '\n\nMAP Sky Calculations', end='\n\n')
             map_uvetas_sky, ggidbar = calc_GammaI_dbar(
@@ -819,7 +853,10 @@ def calculate_map_data(args):
             ))
     fig = plot_summary_plot(data_dict, pspp.k_vals)
     if args.map_sky:
-        fig = plot_sky_summary_plot(data_dict, bm.hpx)
+        suptitle = f'{pc.file_root}, nside={bm.hpx.nside}'
+        fig = plot_sky_summary_plot(
+            data_dict, bm.hpx, suptitle=suptitle
+        )
 
     if args.return_vars:
         return data_dict, fig
