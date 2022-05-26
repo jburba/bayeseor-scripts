@@ -98,6 +98,17 @@ parser.add_argument(
 args = parser.parse_args()
 
 
+def chi_squared(obs, var, exp=None):
+    """
+    Computes the Chi-squared statistic `|obs - exp|**2 / var`.
+
+    """
+    if exp is None:
+        chisq = np.abs(obs)**2 / var
+    else:
+        chisq = np.abs(obs - exp)**2 / var
+    return chisq
+
 def plot_summary_plot(data_dict, k_vals, nbins=50, lw=4):
     """
     Plot the power spectrum, posteriors, matrix inversion accuracy, and MAP
@@ -108,6 +119,8 @@ def plot_summary_plot(data_dict, k_vals, nbins=50, lw=4):
     inv_accuracy = data_dict['inv_accuracy']
     map_vis_res = data_dict['map_vis_res']
     noise = data_dict['n']
+    noise_std = noise.std()
+
     keys_exp = ['inv_accuracy_exp', 'map_vis_exp_res', 'dmps_exp']
     plot_exp = np.any([key in data_dict for key in keys_exp])
     if plot_exp:
@@ -235,23 +248,20 @@ def plot_summary_plot(data_dict, k_vals, nbins=50, lw=4):
             + ' )'
         )
         
-        noise_std = noise.std()
-        lbl = f'Noise\n$\sigma$={noise_std:.4e}'
+        lbl = 'Noise'
         _ = ax_res.hist(
             func(noise) / noise_std, bins=nbins, color='k',
             alpha=0.5, label=lbl
         )
-        res_std = map_vis_res.std()
-        fe = (noise_std - res_std) / noise_std
-        lbl = f'Recovered\n$\sigma$={res_std:.4e} ({fe*100:.2f}%)'
+        chisq = np.mean(chi_squared(map_vis_res, noise_std**2))
+        lbl = f'Recovered\n$\chi^2$={chisq:.2f}'
         _ = ax_res.hist(
             func(map_vis_res) / noise_std, bins=nbins, histtype='step',
             lw=lw, label=lbl
         )
         if plot_exp:
-            res_exp_std = map_vis_exp_res.std()
-            fe = (noise_std - res_exp_std) / noise_std
-            lbl = f'Expected\n$\sigma$={res_exp_std:.4e} ({fe*100:.2f}%)'
+            chisq = np.mean(chi_squared(map_vis_exp_res, noise_std**2))
+            lbl = f'Expected\n$\chi^2$={chisq:.2f}'
             _ = ax_res.hist(
                 func(map_vis_exp_res) / noise_std, bins=nbins,
                 histtype='step', lw=lw, color=exp_c, ls=exp_ls, label=lbl
@@ -275,8 +285,6 @@ def plot_summary_plot(data_dict, k_vals, nbins=50, lw=4):
             frameon=False, bbox_to_anchor=(0.5, 1-0.75*buffer)
         )
     plt.show()
-
-    return fig
 
 def mollview(hpx_map, **kwargs):
     with warnings.catch_warnings(record=True) as w:
@@ -383,7 +391,10 @@ def plot_sky_summary_plot(
         map_sky_res.reshape(nf, npix)[i_f], **proj_kwargs
     )
     res_std = map_sky_res.reshape(nf, npix).std(axis=0)
-    proj_res_std = get_projected_map(res_std, **proj_kwargs)
+    chisq = np.mean(
+        np.abs(map_sky_res.reshape(nf, npix))**2 / n.std()**2, axis=0
+    )
+    proj_chisq = get_projected_map(chisq, **proj_kwargs)
     if plot_exp:
         proj_map_sky_exp = get_projected_map(
             map_sky_exp.reshape(nf, npix)[i_f], **proj_kwargs
@@ -391,8 +402,10 @@ def plot_sky_summary_plot(
         proj_map_sky_exp_res = get_projected_map(
             map_sky_exp_res.reshape(nf, npix)[i_f], **proj_kwargs
         )
-        res_exp_std = map_sky_exp_res.reshape(nf, npix).std(axis=0)
-        proj_res_exp_std = get_projected_map(res_exp_std, **proj_kwargs)
+        chisq_exp = np.mean(
+            np.abs(map_sky_exp_res.reshape(nf, npix))**2 / n.std()**2, axis=0
+        )
+        proj_chisq_exp = get_projected_map(chisq_exp, **proj_kwargs)
     
     ax = grid.axes_row[0][0]
     ax.set_title('d = Input Sky + Noise')
@@ -426,9 +439,9 @@ def plot_sky_summary_plot(
     _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
     
     ax = grid.axes_row[0][3]
-    ax.set_title(r'$\sigma_\nu$(d - MAP sky)')
-    im = ax.imshow(proj_res_std, cmap='magma', **im_kwargs)
-    _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
+    ax.set_title(r'Average $\chi^2$')
+    im = ax.imshow(proj_chisq, cmap='magma', **im_kwargs)
+    _ = fig.colorbar(im, cax=ax.cax)
     
     if plot_exp:
         ax = grid.axes_row[1][1]
@@ -455,15 +468,15 @@ def plot_sky_summary_plot(
         _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
 
         ax = grid.axes_row[1][3]
-        im = ax.imshow(proj_res_exp_std, cmap='magma', **im_kwargs)
-        _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
+        im = ax.imshow(proj_chisq_exp, cmap='magma', **im_kwargs)
+        _ = fig.colorbar(im, cax=ax.cax)
     
     for ax in grid.axes_all:
         ax.set_xlabel('RA [deg]')
         ax.set_ylabel('DEC [deg]')
     
     fig.tight_layout()
-    fig.subplots_adjust(top=top)
+    fig.subplots_adjust(left=0.075, right=0.95, top=top)
     
     # Histograms
     div = grid.get_divider()
@@ -530,8 +543,6 @@ def plot_sky_summary_plot(
     
     if suptitle is not None:
         fig.suptitle(suptitle)
-    
-    return fig
 
 def calc_SigmaI_dbar(pspp, dmps_coeffs):
     """
@@ -699,15 +710,11 @@ def calculate_map_data(args):
     # dbar - Sigma * (Sigma_inv * dbar)
     ssidbar = np.dot(Sigma, map_uvetas)
     inv_accuracy = pspp.dbar - ssidbar
-
+    chisq = chi_squared(map_vis_res, noise_std**2)
     print('Posterior (recovered):')
     print('noise.std()       =', noise_std)
     print('MAP Vis residuals =', map_vis_res_std)
-    print(
-        'Fractional error  =',
-        (noise_std - map_vis_res_std) / noise_std,
-        end='\n\n'
-    )
+    print('Chi-squared       =', np.mean(chisq), end='\n\n')
 
     if dmps_exp is not None:
         Sigma_exp, map_uvetas_exp = calc_SigmaI_dbar(pspp, dmps_exp)
@@ -716,15 +723,12 @@ def calculate_map_data(args):
         map_vis_exp_res_std = map_vis_exp_res.std()
         ssidbar_exp = np.dot(Sigma_exp, map_uvetas_exp)
         inv_accuracy_exp = pspp.dbar - ssidbar_exp
+        chisq_exp = chi_squared(map_vis_exp_res, noise_std**2)
 
         print('Posterior (expected):')
         print('noise.std()       =', noise_std)
         print('MAP Vis residuals =', map_vis_exp_res_std)
-        print(
-            'Fractional error  =',
-            (noise_std - map_vis_exp_res_std) / noise_std,
-            end='\n\n'
-        )
+        print('Chi-squared       =', np.mean(chisq_exp), end='\n\n')
     else:
         map_vis_exp = None
         inv_accuracy_exp = None
@@ -780,15 +784,12 @@ def calculate_map_data(args):
             map_sky_res = d_sky - map_sky
             map_sky_res_std = map_sky_res.std()
             inv_accuracy_sky = dbar_sky - ggidbar
+            chisq_sky = chi_squared(map_sky_res, n_sky_std**2)
             print('Posterior (recovered):')
             print('Imag (min, max)   =', map_sky_imag_range)
             print('noise.std()       =', n_sky_std)
             print('MAP sky residuals =', map_sky_res_std)
-            print(
-                'Fractional error  =',
-                1 - map_sky_res_std / n_sky_std,
-                end='\n\n'
-            )
+            print('Chi-squared       =', np.mean(chisq_sky), end='\n\n')
 
             if dmps_exp is not None:
                 map_uvetas_sky_exp, ggidbar_exp = calc_GammaI_dbar(
@@ -802,15 +803,12 @@ def calculate_map_data(args):
                 map_sky_exp_res = d_sky - map_sky_exp
                 map_sky_exp_res_std = map_sky_exp_res.std()
                 inv_accuracy_sky_exp = dbar_sky - ggidbar_exp
+                chisq_sky_exp = chi_squared(map_sky_exp_res, n_sky_std**2)
                 print('Posterior (expected):')
                 print('Imag (min, max)   =', map_sky_exp_imag_range)
                 print('noise.std()       =', n_sky_std)
                 print('MAP sky residuals =', map_sky_exp_res_std)
-                print(
-                    'Fractional error  =',
-                    1 - map_sky_exp_res_std / n_sky_std,
-                    end='\n\n'
-                )
+                print('Chi-squared       =', np.mean(chisq_sky_exp), end='\n\n')
         print('-'*60)
 
     data_dict = dict(
@@ -851,18 +849,18 @@ def calculate_map_data(args):
                 map_sky_exp=map_sky_exp,
                 map_sky_exp_res=map_sky_exp_res
             ))
-    fig = plot_summary_plot(data_dict, pspp.k_vals)
+    plot_summary_plot(data_dict, pspp.k_vals)
     if args.map_sky:
         suptitle = f'{pc.file_root}, nside={bm.hpx.nside}'
-        fig = plot_sky_summary_plot(
+        plot_sky_summary_plot(
             data_dict, bm.hpx, suptitle=suptitle
         )
 
     if args.return_vars:
-        return data_dict, fig
+        return data_dict
     else:
         return None, None
 
 
 if __name__ == '__main__':
-    data_dict, fig = calculate_map_data(args)
+    data_dict = calculate_map_data(args)
