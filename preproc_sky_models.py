@@ -6,12 +6,10 @@ Interpolate and/or downselect a pyradiosky SkyModel spectrally and spatially.
 import numpy as np
 import argparse
 import ast
-import astropy_healpix as ahp
 
 from copy import deepcopy
 from pathlib import Path
 from pyradiosky import SkyModel
-from astropy import units
 from astropy.units import Quantity
 from BayesEoR.Linalg import Healpix
 
@@ -178,6 +176,8 @@ if args.fov_ra is not None:
             fov_str += f'-{hpx.fov_ra:.1f}'
         else:
             fov_str += f'-ra-{hpx.fov_ra:.1f}-dec-{hpx.fov_dec:.1f}'
+        if hpx.simple_za_filter:
+            fov_str += '-za-filter'
     else:
         fov_str = ''
 else:
