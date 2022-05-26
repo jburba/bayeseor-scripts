@@ -822,7 +822,8 @@ def calculate_map_data(args):
         inv_accuracy=inv_accuracy,
         map_uvetas=map_uvetas,
         map_vis=map_vis,
-        map_vis_res=map_vis_res
+        map_vis_res=map_vis_res,
+        chisq=chisq
     )
     if dmps_exp is not None:
         data_dict.update(dict(
@@ -830,7 +831,8 @@ def calculate_map_data(args):
             inv_accuracy_exp=inv_accuracy_exp,
             map_uvetas_exp=map_uvetas_exp,
             map_vis_exp=map_vis_exp,
-            map_vis_exp_res=map_vis_exp_res
+            map_vis_exp_res=map_vis_exp_res,
+            chisq_exp=chisq_exp
         ))
     if args.map_sky:
         data_dict.update(dict(
@@ -840,14 +842,16 @@ def calculate_map_data(args):
             inv_accuracy_sky=inv_accuracy_sky,
             map_uvetas_sky=map_uvetas_sky,
             map_sky=map_sky,
-            map_sky_res=map_sky_res
+            map_sky_res=map_sky_res,
+            chisq_sky=chisq_sky
         ))
         if dmps_exp is not None:
             data_dict.update(dict(
                 inv_accuracy_sky_exp=inv_accuracy_sky_exp,
                 map_uvetas_sky_exp=map_uvetas_sky_exp,
                 map_sky_exp=map_sky_exp,
-                map_sky_exp_res=map_sky_exp_res
+                map_sky_exp_res=map_sky_exp_res,
+                chisq_sky_exp=chisq_sky_exp
             ))
     plot_summary_plot(data_dict, pspp.k_vals)
     if args.map_sky:
