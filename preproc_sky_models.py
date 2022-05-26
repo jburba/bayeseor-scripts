@@ -12,6 +12,7 @@ from pathlib import Path
 from pyradiosky import SkyModel
 from astropy.units import Quantity
 from BayesEoR.Linalg import Healpix
+from BayesEoR.Utils import get_git_version_info
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -247,6 +248,13 @@ history_str = (
 history_str += ', '.join(
     [f'{key}={args.__dict__[key]}' for key in args.__dict__]
 )
+history_str += '\n\n'
+git_info = get_git_version_info(directory=Path(__file__).parent)
+git_str = 'Git version info: '
+git_str += ', '.join(
+    [f'{key}={git_info[key]}' for key in git_info]
+)
+history_str += git_str
 sm_sub.history += history_str
 
 outfile = filename.strip('.skyh5')
