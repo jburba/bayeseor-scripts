@@ -6,7 +6,7 @@ Interpolate and/or downselect a pyradiosky SkyModel spectrally and spatially.
 import numpy as np
 import argparse
 import ast
-
+import healpy
 from copy import deepcopy
 from pathlib import Path
 from pyradiosky import SkyModel
@@ -74,7 +74,15 @@ parser.add_argument(
     type=int,
     default=256,
     help='HEALPix nside.  Defaults to the nside of the sky model if '
-         'SkyModel.component_type == \'healpix\', otherwise 256.'
+         'SkyModel.component_type == \'healpix\', otherwise 256.  If the nside'
+         ' value passed differs from the nside of the SkyModel, then a new sky'
+         ' model is made using `healpy.ud_grade`.'
+)
+parser.add_argument(
+    '--ud_grade',
+    action='store_true',
+    help='If passed, modify the resolution of the input HEALPix map via the '
+         '--nside command line argument.'
 )
 parser.add_argument(
     '--zero_mean',
@@ -138,6 +146,29 @@ print(f'Reading in data from {data_path}', end='\n\n')
 sm = SkyModel()
 sm.read_skyh5(data_path)
 is_hpx = sm.component_type == 'healpix'
+
+if is_hpx:
+    if args.ud_grade and args.nside != sm.nside:
+        nside_in = sm.nside
+        print(f'Changing nside from {sm.nside} to {args.nside}', end='\n\n')
+        npix = healpy.nside2npix(args.nside)
+        nf = sm.Nfreqs
+        nstokes = sm.stokes.shape[0]
+        stokes_unit = sm.stokes.unit
+        stokes = np.zeros((nstokes, nf, npix))
+        for i_f in range(nf):
+            stokes[0, i_f] = healpy.ud_grade(
+                sm.stokes[0, i_f].value, args.nside
+            )
+        stokes = Quantity(stokes, unit=stokes_unit)
+        hpx_inds = np.arange(npix)
+        sm = SkyModel(
+            stokes=stokes, spectral_type='full', freq_array=sm.freq_array,
+            component_type='healpix', nside=args.nside, hpx_inds=hpx_inds
+        )
+        changed_nside = True
+    else:
+        changed_nside = False
 
 if args.fov_ra is not None:
     print('Performing spatial downselect')
@@ -258,6 +289,8 @@ history_str += git_str
 sm_sub.history += history_str
 
 outfile = filename.strip('.skyh5')
+if is_hpx and changed_nside:
+    outfile = outfile.replace(f'{nside_in}', f'{args.nside}')
 outfile += freq_str
 outfile += beta_str
 outfile += fov_str
