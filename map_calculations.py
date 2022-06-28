@@ -1,6 +1,7 @@
 """
 Calculates maximum a posteriori data products using BayesEoR outputs.
 """
+from http.client import HTTPException
 import numpy as np
 import warnings
 import argparse
@@ -328,7 +329,7 @@ def get_projected_map(
 
 def plot_sky_summary_plot(
         data_dict, hpx, i_f=0, kelvin=True, lw=3, xsize=151,
-        nbins=51, suptitle=None, smooth_scale=None):
+        nbins=51, suptitle=None):
     """
     Plot MAP sky summary plot.
 
@@ -342,26 +343,45 @@ def plot_sky_summary_plot(
     else:
         temp_factor = 1.0
         temp_unit = 'mK'
-    s = data_dict['s_sky'] * temp_factor
-    n = data_dict['n_sky'] * temp_factor
-    d = data_dict['d_sky'] * temp_factor
-    chisq = data_dict['chisq_sky'].mean()
-    pval = data_dict['pval_sky']
-    chisq_exp = data_dict['chisq_sky_exp'].mean()
-    pval_exp = data_dict['pval_sky_exp']
-    inv_accuracy = data_dict['inv_accuracy_sky']
-    map_sky = data_dict['map_sky'] * temp_factor
-    map_sky_res = data_dict['map_sky_res'] * temp_factor
     keys_exp = ['inv_accuracy_exp', 'map_sky_exp', 'map_sky_exp_res']
     plot_exp = np.any([key in data_dict for key in keys_exp])
+    inv_accuracy = data_dict['inv_accuracy_sky']
     if plot_exp:
         inv_accuracy_exp = data_dict['inv_accuracy_sky_exp']
-        map_sky_exp = data_dict['map_sky_exp'] * temp_factor
-        map_sky_exp_res = data_dict['map_sky_exp_res'] * temp_factor
+    if 'd_sky_smooth' not in data_dict:
+        n = data_dict['n_sky'] * temp_factor
+        d = data_dict['d_sky'] * temp_factor
+        chisq = data_dict['chisq_sky'].mean()
+        pval = data_dict['pval_sky']
+        chisq_exp = data_dict['chisq_sky_exp'].mean()
+        pval_exp = data_dict['pval_sky_exp']
+        map_sky = data_dict['map_sky'] * temp_factor
+        map_sky_res = data_dict['map_sky_res'] * temp_factor
+        if plot_exp:
+            map_sky_exp = data_dict['map_sky_exp'] * temp_factor
+            map_sky_exp_res = data_dict['map_sky_exp_res'] * temp_factor
+    else:
+        n = data_dict['n_sky_smooth'] * temp_factor
+        d = data_dict['d_sky_smooth'] * temp_factor
+        chisq = data_dict['chisq_sky_smooth'].mean()
+        pval = data_dict['pval_sky_smooth']
+        chisq_exp = data_dict['chisq_sky_exp_smooth'].mean()
+        pval_exp = data_dict['pval_sky_exp_smooth']
+        map_sky = data_dict['map_sky_smooth'] * temp_factor
+        map_sky_res = data_dict['map_sky_res_smooth'] * temp_factor
+        if plot_exp:
+            map_sky_exp = data_dict['map_sky_exp_smooth'] * temp_factor
+            map_sky_exp_res = data_dict['map_sky_exp_res_smooth'] * temp_factor
     
     plot_height = 6
-    ncols = 3
-    fig_width = 16
+    plot_width = 17/3
+    if plot_exp:
+        nrows = 2
+        ncols = 3
+    else:
+        nrows = 1
+        ncols = 4
+    fig_width = plot_width * ncols
     fig_height = plot_height * 2.2
     fig = plt.figure(figsize=(fig_width, fig_height))
     if suptitle:
@@ -369,17 +389,10 @@ def plot_sky_summary_plot(
     else:
         top = 0.975
     
-    # Images
-    if plot_exp:
-        nrows = 2
-    else:
-        nrows = 1
     grid = ImageGrid(
         fig, 211, (nrows, ncols), axes_pad=(1.0, 0.5), share_all=True,
         cbar_mode='each', cbar_pad=0.01
     )
-    grid.axes_row[1][0].axis('off')
-    grid.axes_row[1][0].cax.axis('off')
     
     fov_fac = 1.5 + 0.5 * hpx.fov_ra / 180.0
     if hpx.fov_ra == 180.0 and hpx.fov_dec == 180.0:
@@ -405,54 +418,30 @@ def plot_sky_summary_plot(
         nside=hpx.nside, pix=hpx.pix_fg, lonra=extent_ra, latra=extent_dec,
         xsize=xsize
     )
-    proj_d = get_projected_map(d.reshape(nf, npix)[i_f], **proj_kwargs)
+    
+    beam_vals = hpx.beam_vals.reshape(nf, npix)
+    n = n.reshape(nf, npix)
+    d = d.reshape(nf, npix)
+    map_sky = map_sky.reshape(nf, npix)
+    map_sky_res = map_sky_res.reshape(nf, npix)
+    proj_n = get_projected_map(n[i_f] * beam_vals[i_f], **proj_kwargs)
+    proj_d = get_projected_map(d[i_f] * beam_vals[i_f], **proj_kwargs)
     proj_map_sky = get_projected_map(
-        map_sky.reshape(nf, npix)[i_f], **proj_kwargs
+        map_sky[i_f] * beam_vals[i_f], **proj_kwargs
     )
-    if smooth_scale is not None:
-        hpx = data_dict['bm'].hpx
-        range_ra, range_dec = hpx.get_extent_ra_dec(
-            hpx.fov_ra, hpx.fov_dec, fov_fac=fov_fac
-        )
-        ras = np.linspace(*range_ra, xsize)
-        decs = np.linspace(*range_dec, xsize)
-        ra_mg, dec_mg = np.meshgrid(ras, decs)
-        gauss_kernel = np.exp(
-            -((ra_mg - hpx.field_center[0])**2
-            + (dec_mg - hpx.field_center[1])**2)
-            / (2 * smooth_scale**2)
-        )
-        nan_mask = np.isnan(proj_d)
-        conv_kw = dict(
-            boundary='fill', nan_treatment='interpolate', preserve_nan=True,
-            mask=nan_mask, fill_value=np.nan, normalize_kernel=True
-        )
-        proj_d = convolve(proj_d, gauss_kernel, **conv_kw)
-        proj_map_sky = convolve(proj_map_sky, gauss_kernel, **conv_kw)
-    proj_map_sky_res = proj_d - proj_map_sky
-    # proj_map_sky_res = get_projected_map(
-    #     map_sky_res.reshape(nf, npix)[i_f], **proj_kwargs
-    # )
-    # chisq_map = np.mean(
-    #     np.abs(map_sky_res.reshape(nf, npix))**2 / n.std()**2, axis=0
-    # )
-    # proj_chisq = get_projected_map(chisq_map, **proj_kwargs)
+    proj_map_sky_res = get_projected_map(
+        map_sky_res[i_f] * beam_vals[i_f], **proj_kwargs
+    )
+
     if plot_exp:
+        map_sky_exp = map_sky_exp.reshape(nf, npix)
+        map_sky_exp_res = map_sky_exp_res.reshape(nf, npix)
         proj_map_sky_exp = get_projected_map(
-            map_sky_exp.reshape(nf, npix)[i_f], **proj_kwargs
+            map_sky_exp[i_f] * beam_vals[i_f], **proj_kwargs
         )
-        if smooth_scale is not None:
-            proj_map_sky_exp = convolve(
-                proj_map_sky_exp, gauss_kernel, **conv_kw
-            )
-        proj_map_sky_exp_res = proj_d - proj_map_sky_exp
-        # proj_map_sky_exp_res = get_projected_map(
-        #     map_sky_exp_res.reshape(nf, npix)[i_f], **proj_kwargs
-        # )
-        # chisq_map_exp = np.mean(
-        #     np.abs(map_sky_exp_res.reshape(nf, npix))**2 / n.std()**2, axis=0
-        # )
-        # proj_chisq_exp = get_projected_map(chisq_map_exp, **proj_kwargs)
+        proj_map_sky_exp_res = get_projected_map(
+            map_sky_exp_res[i_f] * beam_vals[i_f], **proj_kwargs
+        )
     
     ax = grid.axes_row[0][0]
     ax.set_title('d = Input Sky + Noise')
@@ -485,6 +474,17 @@ def plot_sky_summary_plot(
     )
     _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
     
+    if plot_exp:
+        ax = grid.axes_row[1][0]
+    else:
+        ax = grid.axes_row[0][3]
+    ax.set_title('Noise')
+    clim = np.nanmax(np.abs(proj_n))
+    im = ax.imshow(
+        proj_n, cmap='RdBu_r', vmin=-clim, vmax=clim, **im_kwargs
+    )
+    _ = fig.colorbar(im, cax=ax.cax, label=temp_unit)
+
     # ax = grid.axes_row[0][3]
     # ax.set_title(r'Average $\chi^2$')
     # im = ax.imshow(proj_chisq, cmap='magma', **im_kwargs)
@@ -562,18 +562,18 @@ def plot_sky_summary_plot(
     n_std = n.std()
     lbl = f'Noise'
     _ = ax_res.hist(
-        np.real(n) / n_std, bins=nbins, color='k',
+        np.real((n * beam_vals).ravel()) / n_std, bins=nbins, color='k',
         alpha=0.5, label=lbl
     )
     lbl = f'Recovered\n$\chi^2$={chisq:.5f} ({pval:.3f})'
     _ = ax_res.hist(
-        np.real(map_sky_res) / n_std, bins=nbins, histtype='step',
-        lw=lw, label=lbl
+        np.real((map_sky_res * beam_vals).ravel()) / n_std,
+        bins=nbins, histtype='step', lw=lw, label=lbl
     )
     if plot_exp:
         lbl = f'Expected\n$\chi^2$={chisq_exp:.5f} ({pval_exp:.3f})'
         _ = ax_res.hist(
-            np.real(map_sky_exp_res) / n_std, bins=nbins,
+            np.real((map_sky_exp_res * beam_vals).ravel()) / n_std, bins=nbins,
             histtype='step', lw=lw, color=exp_c, ls=exp_ls, label=lbl
         )
     ax_res.set_xlabel(
@@ -800,7 +800,6 @@ def calculate_map_data(args):
             n_sky_amp = s_sky.std() * args.sky_rms_frac
             np.random.seed(args.sky_noise_seed)
             n_sky = np.random.normal(0, n_sky_amp, s_sky.size)
-            n_sky_std = n_sky.std()
             Ninv_sky = sparse.diags(np.ones(s_sky.size) / n_sky_amp**2)
             d_sky = s_sky + n_sky
             R = bm.read_data(
@@ -822,6 +821,29 @@ def calculate_map_data(args):
                 )
                 print()
             
+            freqs = units.Quantity(
+                bm.f_min + bm.df * np.arange(bm.nf), unit='MHz'
+            )
+            freqs = freqs.to('Hz')
+            try:
+                _, _, _, az, za = bm.hpx.calc_lmn_from_radec(
+                    bm.hpx.central_jd, bm.hpx.ra, bm.hpx.dec, return_azza=True
+                )
+                npix = bm.hpx.npix_fov
+            except:
+                _, _, _, az, za = bm.hpx.calc_lmn_from_radec(
+                    bm.hpx.central_jd, bm.hpx.ra_fg, bm.hpx.dec_fg,
+                    return_azza=True
+                )
+                npix = bm.hpx.npix_fov_fg
+            beam_vals = np.zeros((bm.nf, npix))
+            for i_f in range(bm.nf):
+                beam_vals[i_f] = bm.hpx.get_beam_vals(
+                    az, za, freq=freqs[i_f].value
+                )
+            beam_vals = beam_vals.ravel()
+            bm.hpx.beam_vals = beam_vals
+
             print('-'*60 + '\n\nMAP Sky Calculations', end='\n\n')
             map_uvetas_sky, ggidbar = calc_GammaI_dbar(
                 pspp, dmps, dbar_sky, R_Ninv_R
@@ -829,18 +851,74 @@ def calculate_map_data(args):
             map_sky = np.dot(R, map_uvetas_sky)
             map_sky_imag_range = (map_sky.imag.min(), map_sky.imag.max())
             map_sky = map_sky.real
+            if args.sky_smooth_scale is not None:
+                try:
+                    ras = bm.hpx.ra
+                    decs = bm.hpx.dec
+                except:
+                    ras = bm.hpx.ra_fg
+                    decs = bm.hpx.dec_fg
+                conv_matrix = np.zeros((npix, npix))
+                for i_pix, (ra, dec) in enumerate(zip(ras, decs)):
+                    conv_matrix[i_pix] = np.exp(
+                        -((ras - ra)**2 + (decs - dec)**2)
+                        / (2 * args.sky_smooth_scale**2)
+                    )
+                    # This normalization prevents the edges of the image from
+                    # being downweighted due to the lack of integrated area
+                    # of the convolutional kernel.  I don't know if this
+                    # is the "right" thing to do, but it makes for the
+                    # best qualitative smoothed image.
+                    conv_matrix[i_pix] /= np.sum(conv_matrix[i_pix])
+                s_sky_smooth = np.zeros_like(s_sky)
+                n_sky_smooth = np.zeros_like(n_sky)
+                d_sky_smooth = np.zeros_like(d_sky)
+                map_sky_smooth = np.zeros_like(map_sky)
+                for i_f in range(bm.nf):
+                    freq_inds = slice(
+                        i_f * bm.hpx.npix_fov, (i_f + 1) * bm.hpx.npix_fov
+                    )
+                    s_sky_smooth[freq_inds] = np.dot(
+                        conv_matrix, s_sky[freq_inds]
+                    )
+                    n_sky_smooth[freq_inds] = np.dot(
+                        conv_matrix, n_sky[freq_inds]
+                    )
+                    d_sky_smooth[freq_inds] = np.dot(
+                        conv_matrix, d_sky[freq_inds]
+                    )
+                    map_sky_smooth[freq_inds] = np.dot(
+                        conv_matrix, map_sky[freq_inds]
+                    )
+                n_sky_smooth_std = n_sky_smooth.std()
+                map_sky_res_smooth = d_sky_smooth - map_sky_smooth
+                # map_sky_res_smooth_std = map_sky_res_smooth.std()
             map_sky_res = d_sky - map_sky
-            map_sky_res_std = map_sky_res.std()
+            # map_sky_res_std = map_sky_res.std()
             inv_accuracy_sky = dbar_sky - ggidbar
+            n_sky_std = n_sky.std()
             chisq_sky = chi_squared(map_sky_res, n_sky_std**2)
             cdf_sky = gammainc(d_sky.size/2, chisq_sky.sum()/2)
             pval_sky = 1 - cdf_sky
             print('Posterior (recovered):')
             print('Imag (min, max)     =', map_sky_imag_range)
-            print('noise.std()         =', n_sky_std)
-            print('MAP sky residuals   =', map_sky_res_std)
-            print('Reduced chi-square  =', np.mean(chisq_sky))
-            print('p-value             =', pval_sky, end='\n\n')
+            if args.sky_smooth_scale is None:
+                # print('noise.std()         =', n_sky_std)
+                # print('MAP sky residuals   =', map_sky_res_std)
+                print('Reduced chi-square  =', np.mean(chisq_sky))
+                print('p-value             =', pval_sky, end='\n\n')
+            else:
+                chisq_sky_smooth = chi_squared(
+                    map_sky_res_smooth, n_sky_smooth_std**2
+                )
+                cdf_sky_smooth = gammainc(
+                    d_sky.size/2, chisq_sky_smooth.sum()/2
+                )
+                pval_sky_smooth = 1 - cdf_sky_smooth
+                # print('noise.std()         =', n_sky_smooth_std)
+                # print('MAP sky residuals   =', map_sky_res_smooth_std)
+                print('Reduced chi-square  =', np.mean(chisq_sky_smooth))
+                print('p-value             =', pval_sky_smooth, end='\n\n')
 
             if dmps_exp is not None:
                 map_uvetas_sky_exp, ggidbar_exp = calc_GammaI_dbar(
@@ -851,18 +929,47 @@ def calculate_map_data(args):
                     map_sky_exp.imag.min(), map_sky_exp.imag.max()
                 )
                 map_sky_exp = map_sky_exp.real
+                if args.sky_smooth_scale is not None:
+                    map_sky_exp_smooth = np.zeros_like(map_sky_exp)
+                    for i_f in range(bm.nf):
+                        freq_inds = slice(
+                            i_f * bm.hpx.npix_fov, (i_f + 1) * bm.hpx.npix_fov
+                        )
+                        map_sky_exp_smooth[freq_inds] = np.dot(
+                            conv_matrix, map_sky_exp[freq_inds]
+                        )
+                    map_sky_exp_res_smooth = d_sky_smooth - map_sky_exp_smooth
+                    # map_sky_exp_res_smooth_std = map_sky_exp_res_smooth.std()
                 map_sky_exp_res = d_sky - map_sky_exp
-                map_sky_exp_res_std = map_sky_exp_res.std()
+                # map_sky_exp_res_std = map_sky_exp_res.std()
                 inv_accuracy_sky_exp = dbar_sky - ggidbar_exp
                 chisq_sky_exp = chi_squared(map_sky_exp_res, n_sky_std**2)
                 cdf_sky_exp = gammainc(d_sky.size/2, chisq_sky_exp.sum()/2)
                 pval_sky_exp = 1 - cdf_sky_exp
                 print('Posterior (expected):')
                 print('Imag (min, max)     =', map_sky_exp_imag_range)
-                print('noise.std()         =', n_sky_std)
-                print('MAP sky residuals   =', map_sky_exp_res_std)
-                print('Reduced chi-square  =', np.mean(chisq_sky_exp))
-                print('p-value             =', pval_sky_exp, end='\n\n')
+                if args.sky_smooth_scale is None:
+                    # print('noise.std()         =', n_sky_std)
+                    # print('MAP sky residuals   =', map_sky_exp_res_std)
+                    print('Reduced chi-square  =', np.mean(chisq_sky_exp))
+                    print('p-value             =', pval_sky_exp, end='\n\n')
+                else:
+                    chisq_sky_exp_smooth = chi_squared(
+                        map_sky_exp_res_smooth, n_sky_std**2
+                    )
+                    cdf_sky_exp_smooth = gammainc(
+                        d_sky.size/2, chisq_sky_exp_smooth.sum()/2
+                    )
+                    pval_sky_exp_smooth = 1 - cdf_sky_exp_smooth
+                    # print('noise.std()         =', n_sky_smooth_std)
+                    # print('MAP sky residuals   =', map_sky_exp_res_smooth_std)
+                    print(
+                        'Reduced chi-square  =', np.mean(chisq_sky_exp_smooth)
+                    )
+                    print(
+                        'p-value             =', pval_sky_exp_smooth,
+                        end='\n\n'
+                    )
         print('-'*60)
 
     data_dict = dict(
@@ -902,6 +1009,17 @@ def calculate_map_data(args):
             chisq_sky=chisq_sky,
             pval_sky=pval_sky
         ))
+        if args.sky_smooth_scale is not None:
+            data_dict.update(dict(
+                conv_matrix=conv_matrix,
+                s_sky_smooth=s_sky_smooth,
+                n_sky_smooth=n_sky_smooth,
+                d_sky_smooth=d_sky_smooth,
+                map_sky_smooth=map_sky_smooth,
+                map_sky_res_smooth=map_sky_res_smooth,
+                chisq_sky_smooth=chisq_sky_smooth,
+                pval_sky_smooth=pval_sky_smooth
+            ))
         if dmps_exp is not None:
             data_dict.update(dict(
                 inv_accuracy_sky_exp=inv_accuracy_sky_exp,
@@ -911,14 +1029,24 @@ def calculate_map_data(args):
                 chisq_sky_exp=chisq_sky_exp,
                 pval_sky_exp=pval_sky_exp
             ))
+            if args.sky_smooth_scale is not None:
+                data_dict.update(dict(
+                    map_sky_exp_smooth=map_sky_exp_smooth,
+                    map_sky_exp_res_smooth=map_sky_exp_res_smooth,
+                    chisq_sky_exp_smooth=chisq_sky_exp_smooth,
+                    pval_sky_exp_smooth=pval_sky_exp_smooth
+                ))
     plt.close()
     plot_summary_plot(data_dict, pspp.k_vals)
     if args.map_sky:
         suptitle = f'{pc.file_root}, nside={bm.hpx.nside}'
-        plot_sky_summary_plot(
-            data_dict, bm.hpx, suptitle=suptitle,
-            smooth_scale=args.sky_smooth_scale
-        )
+        if args.sky_smooth_scale is None:
+            plot_sky_summary_plot(data_dict, bm.hpx, suptitle=suptitle)
+        else:
+            suptitle += (
+                f', $\sigma_{{smooth}}={args.sky_smooth_scale:.1f}^\circ$'
+            )
+            plot_sky_summary_plot(data_dict, bm.hpx, suptitle=suptitle)
     plt.show()
 
     if args.return_vars:
